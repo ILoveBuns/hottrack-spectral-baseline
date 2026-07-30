@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from hottrack.metrics import ope_metrics
-from hottrack.submission import validate_submission, write_submission
+from hottrack.submission import validate_against_template, validate_submission, write_submission
 from hottrack.tracker import SpectralSignatureTracker
 
 
@@ -36,10 +36,10 @@ class BaselineTest(unittest.TestCase):
     def test_submission_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "submission.csv"
-            write_submission(path, [("demo", 0, (1, 2, 3, 4))])
+            write_submission(path, [("demo_1", (1, 2, 3, 4))])
             self.assertEqual(1, validate_submission(path))
+            self.assertEqual(1, validate_against_template(path, path))
 
 
 if __name__ == "__main__":
     unittest.main()
-

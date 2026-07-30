@@ -12,7 +12,7 @@ adapts to gradual appearance change.
 
 - Hyperspectral `H × W × bands` tracker.
 - One-pass evaluation: precision at 20 px, success AUC and mean IoU.
-- Submission writer and strict validator.
+- Official `ID,x,y,width,height` submission writer and template-order validator.
 - Deterministic moving-target regression test.
 
 ## Test
@@ -37,4 +37,3 @@ acceptance; no synthetic score is presented as a competition result.
 ## License
 
 MIT.
-
