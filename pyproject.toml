@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hottrack-spectral-baseline"
+version = "0.1.0"
+description = "Reproducible spectral-signature tracker for HOTC 2026"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+license = {text = "MIT"}
+
+[tool.setuptools.packages.find]
+include = ["hottrack*"]
+
