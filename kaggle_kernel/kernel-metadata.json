@@ -1,0 +1,13 @@
+{
+  "id": "jidaoluckey/hotc-2026-lightweight-csrt-tracker",
+  "title": "HOTC 2026 Lightweight CSRT Tracker",
+  "code_file": "hotc_csrt.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "competition_sources": ["hyperspectral-object-tracking-challenge-2026"],
+  "dataset_sources": [],
+  "kernel_sources": []
+}
