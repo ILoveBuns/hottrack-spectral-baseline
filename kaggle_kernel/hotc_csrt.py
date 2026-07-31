@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -93,13 +94,22 @@ fallback = tuple(
 )
 
 print("Indexing the organizers' validation folder…")
-files = gdown.download_folder(
-    id=DRIVE_FOLDER_ID,
-    output=str(WORK),
-    skip_download=True,
-    quiet=True,
-    use_cookies=False,
-)
+files = []
+for attempt in range(4):
+    try:
+        files = gdown.download_folder(
+            id=DRIVE_FOLDER_ID,
+            output=str(WORK),
+            skip_download=True,
+            quiet=True,
+            use_cookies=False,
+        ) or []
+        if files:
+            break
+    except Exception as error:
+        print(f"Drive index attempt {attempt + 1}/4 failed: {type(error).__name__}")
+    if attempt < 3:
+        time.sleep(15 * (attempt + 1))
 print(f"Indexed {len(files)} Drive entries")
 
 initial_files = {}
