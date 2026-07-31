@@ -3,3 +3,7 @@ __pycache__/
 data/
 outputs/
 submissions/
+work/
+kaggle_output*/
+public_output*/
+public_selected*/

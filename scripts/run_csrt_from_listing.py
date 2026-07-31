@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -46,21 +47,20 @@ def sequence_from_path(path: str) -> str | None:
 def download(file_id: str, destination: Path) -> bool:
     if destination.exists() and destination.stat().st_size > 0:
         return True
-    try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_suffix(destination.suffix + ".part")
-        result = gdown.download(id=file_id, output=str(temporary), quiet=True, use_cookies=False)
-        if not result:
-            temporary.unlink(missing_ok=True)
-            return False
-        if temporary.stat().st_size <= 0:
-            temporary.unlink(missing_ok=True)
-            return False
-        temporary.replace(destination)
-        return True
-    except Exception:
-        destination.with_suffix(destination.suffix + ".part").unlink(missing_ok=True)
-        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    for attempt in range(2):
+        try:
+            result = gdown.download(id=file_id, output=str(temporary), quiet=True, use_cookies=False)
+            if result and temporary.stat().st_size > 0:
+                temporary.replace(destination)
+                return True
+        except Exception:
+            pass
+        temporary.unlink(missing_ok=True)
+        if attempt == 0:
+            time.sleep(1)
+    return False
 
 
 def make_tracker(kind: str):
@@ -74,6 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--listing", type=Path, required=True)
     parser.add_argument("--sample", type=Path, required=True)
+    parser.add_argument("--initial-boxes", type=Path)
     parser.add_argument("--work", type=Path, default=Path("work/csrt"))
     parser.add_argument("--output", type=Path, default=Path("submissions/csrt_v1.csv"))
     parser.add_argument("--tracker", choices=("kcf", "csrt"), default="kcf")
@@ -91,6 +92,11 @@ def main() -> None:
     listing["sequence"] = listing.path.map(sequence_from_path)
     listing["frame"] = listing.path.map(frame_number)
     listing = listing[listing.sequence.isin(sequences)]
+    initial_boxes = pd.read_csv(args.initial_boxes) if args.initial_boxes else None
+    if initial_boxes is not None:
+        initial_boxes["sequence"] = initial_boxes.ID.str.rsplit("_", n=1).str[0]
+        initial_boxes["frame"] = initial_boxes.ID.str.rsplit("_", n=1).str[1].astype(int)
+        initial_boxes = initial_boxes[initial_boxes.frame == 1].set_index("sequence")
 
     args.work.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = args.work / "checkpoints"
@@ -114,14 +120,23 @@ def main() -> None:
             continue
 
         sequence_dir = args.work / "frames" / sequence
-        init_path = args.work / "initial" / f"{sequence}.txt"
-        if not download(str(init_rows.iloc[0].id), init_path):
-            print(f"[{index}/{len(sequences)}] {sequence}: initial box failed", flush=True)
-            continue
-        values = [float(value) for value in re.split(r"[,\s]+", init_path.read_text().strip()) if value]
-        if len(values) < 4:
-            continue
-        current = tuple(values[:4])
+        if initial_boxes is not None and sequence in initial_boxes.index:
+            box = initial_boxes.loc[sequence]
+            current = (
+                float(box.x - box.width / 2),
+                float(box.y - box.height / 2),
+                float(box.width),
+                float(box.height),
+            )
+        else:
+            init_path = args.work / "initial" / f"{sequence}.txt"
+            if init_rows.empty or not download(str(init_rows.iloc[0].id), init_path):
+                print(f"[{index}/{len(sequences)}] {sequence}: initial box failed", flush=True)
+                continue
+            values = [float(value) for value in re.split(r"[,\s]+", init_path.read_text().strip()) if value]
+            if len(values) < 4:
+                continue
+            current = tuple(values[:4])
 
         paths = {int(row.frame): sequence_dir / f"{int(row.frame):06d}.jpg" for row in image_rows.itertuples()}
         ids = {int(row.frame): str(row.id) for row in image_rows.itertuples()}
