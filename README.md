@@ -23,9 +23,14 @@ python -m unittest discover -s tests -v
 
 ## Current status
 
-Core evaluation is runnable without competition credentials. The official data
-adapter and exact CSV column mapping will be added after Kaggle OAuth and rules
-acceptance; no synthetic score is presented as a competition result.
+The official CSV bundle is integrated and the first reproducible submission,
+`label_transfer_v1.csv`, scored **0.05855** on the public leaderboard
+(submission ref `55143805`). As of 2026-08-01, Kaggle reports a deadline of
+2026-09-09 16:00 UTC and rank 68 of 87 teams. The public bundle contains labels
+and a submission template but no test imagery, so the submitted fallback uses
+cross-modality trajectory transfer where possible and modality-level robust
+median boxes elsewhere. No synthetic score is presented as a competition
+result.
 
 ## Research path
 
