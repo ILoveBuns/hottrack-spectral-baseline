@@ -144,6 +144,19 @@ def main() -> None:
             jobs = {executor.submit(download, ids[number], path): number for number, path in paths.items()}
             available = {jobs[job] for job in as_completed(jobs) if job.result()}
 
+        # A zero-frame sequence is not a tracking result.  Persisting only the
+        # initial box would make later runs treat a failed download as a valid
+        # checkpoint and could silently contaminate the final submission.
+        if not available:
+            checkpoint.unlink(missing_ok=True)
+            for path in paths.values():
+                path.unlink(missing_ok=True)
+            print(
+                f"[{index}/{len(sequences)}] {sequence}: 0/{len(target)} frames; retryable",
+                flush=True,
+            )
+            continue
+
         tracker = None
         predictions = []
         for row in target.itertuples(index=False):
