@@ -140,9 +140,25 @@ def main() -> None:
 
         paths = {int(row.frame): sequence_dir / f"{int(row.frame):06d}.jpg" for row in image_rows.itertuples()}
         ids = {int(row.frame): str(row.id) for row in image_rows.itertuples()}
+        probe_frame = min(paths)
+        if not download(ids[probe_frame], paths[probe_frame]):
+            checkpoint.unlink(missing_ok=True)
+            for path in paths.values():
+                path.unlink(missing_ok=True)
+            print(
+                f"[{index}/{len(sequences)}] {sequence}: probe frame unavailable; retryable",
+                flush=True,
+            )
+            continue
+
+        available = {probe_frame}
         with ThreadPoolExecutor(max_workers=12) as executor:
-            jobs = {executor.submit(download, ids[number], path): number for number, path in paths.items()}
-            available = {jobs[job] for job in as_completed(jobs) if job.result()}
+            jobs = {
+                executor.submit(download, ids[number], path): number
+                for number, path in paths.items()
+                if number != probe_frame
+            }
+            available.update(jobs[job] for job in as_completed(jobs) if job.result())
 
         # A zero-frame sequence is not a tracking result.  Persisting only the
         # initial box would make later runs treat a failed download as a valid
