@@ -14,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
-import gdown
 import pandas as pd
+import requests
 
 
 SENSOR_PREFIX = {
@@ -51,8 +51,25 @@ def download(file_id: str, destination: Path) -> bool:
     temporary = destination.with_suffix(destination.suffix + ".part")
     for attempt in range(2):
         try:
-            result = gdown.download(id=file_id, output=str(temporary), quiet=True, use_cookies=False)
-            if result and temporary.stat().st_size > 0:
+            # The public Drive index points at small JPEGs.  gdown's generic
+            # redirect flow can wait forever when Drive throttles a redirect,
+            # so use the bounded official content endpoint and validate that
+            # the response is really an image before checkpointing it.
+            url = "https://drive.usercontent.google.com/download"
+            with requests.get(
+                url,
+                params={"id": file_id, "export": "download", "confirm": "t"},
+                stream=True,
+                timeout=(8, 20),
+            ) as response:
+                response.raise_for_status()
+                if not response.headers.get("content-type", "").lower().startswith("image/"):
+                    raise ValueError("Drive response is not an image")
+                with temporary.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if chunk:
+                            output.write(chunk)
+            if temporary.stat().st_size > 0:
                 temporary.replace(destination)
                 return True
         except Exception:
