@@ -21,16 +21,23 @@ adapts to gradual appearance change.
 python -m unittest discover -s tests -v
 ```
 
+The bounded tracker passes, initialization provenance, hardened checkpoint
+contract, and current no-submit decision are documented in
+[`HOTC_TRACKING_AUDIT.md`](HOTC_TRACKING_AUDIT.md).
+
 ## Current status
 
 The official CSV bundle is integrated and the first reproducible submission,
 `label_transfer_v1.csv`, scored **0.05855** on the public leaderboard
-(submission ref `55143805`). As of 2026-08-01, Kaggle reports a deadline of
-2026-09-09 16:00 UTC and rank 68 of 87 teams. The public bundle contains labels
-and a submission template but no test imagery, so the submitted fallback uses
+(submission ref `55143805`). As of the 2026-08-01 15:10 Beijing-time patrol,
+Kaggle reports a deadline of 2026-09-09 16:00 UTC and rank 69 of 88 teams. The
+public bundle contains labels and a submission template but no test imagery, so
+the submitted fallback uses
 cross-modality trajectory transfer where possible and modality-level robust
 median boxes elsewhere. No synthetic score is presented as a competition
-result.
+result. A materially independent image-tracking candidate is complete for 50/75
+sequences with organizer initial boxes; the remaining 25 are ready for retry
+after Drive throttling clears. It has not been submitted.
 
 ## Research path
 

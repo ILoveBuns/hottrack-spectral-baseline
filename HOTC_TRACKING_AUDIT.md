@@ -1,11 +1,35 @@
-# HOTC tracking audit — 2026-08-01
+# HOTC tracking audit — updated 2026-08-04
 
 This audit records the result of a full, bounded pass over the 75 validation
 sequences indexed by the organizer-data lookup exported from a public Kaggle
 notebook. It is evidence about artifact availability and pipeline behavior,
 not a leaderboard score.
 
-## Result
+## 2026-08-04 recovery result
+
+- A full 75-sequence pipeline pass proved that all 26,860 target rows are
+  addressable. That first output is **not submission eligible** because it used
+  V1-estimated initial boxes and legacy checkpoints without a bound manifest.
+- The hardened rerun uses organizer `init_rect.txt` boxes, requires every target
+  frame, and binds checkpoints to the tracker and initialization source.
+- 50/75 sequences (18,548 rows) now have complete KCF checkpoints using verified
+  organizer initial boxes. Their first-frame coordinate conversion has zero
+  maximum error against the organizer rectangles.
+- All 18,548 predictions differ from V1; median center displacement is 99.45 px
+  (p95 240.71 px), so this is a materially independent candidate.
+- Drive throttling began after sequence 50. Incomplete sequences were rejected
+  and no full submission was emitted.
+- Initialization provenance is explicit: 53 locally downloaded organizer boxes,
+  3 public-notebook mirrors validated against 51 exact local matches, and 19
+  clearly labeled V1 cross-modality fallbacks.
+- The remaining 25-sequence run is checkpoint-ready but currently has 0/25
+  because both bounded Drive endpoints are throttled.
+
+No new Kaggle submission has been made. Resume only the names in
+`config/missing_official_kcf_sequences.txt`, then assemble and audit the hybrid
+candidate before an account-holder-approved scored submission.
+
+## 2026-08-01 result
 
 - 75/75 sequence entries were inspected.
 - 12/75 sequences produced checkpoints from real downloaded JPEG frames.
@@ -41,6 +65,10 @@ The successful checkpoints are:
 - A submission is emitted only when every sequence has a full-length
   checkpoint and the merged CSV passes ID-order, null, width, and height
   assertions.
+- Legacy checkpoints without a configuration manifest are rejected; changing
+  tracker or initialization source also causes a hard failure.
+- Text metadata accepts only text/plain or octet-stream responses; frames accept
+  only image content. HTML quota/error pages are never checkpointed.
 
 ## Resume condition
 
@@ -49,4 +77,3 @@ the public Drive files become available. Existing complete checkpoints are
 reused. Evaluate and submit a candidate only after all 75 checkpoints exist,
 the strict CSV checks pass, and the candidate is materially different from the
 current `label_transfer_v1.csv` submission.
-

@@ -8,6 +8,8 @@ checkpointed per sequence so a long run can resume safely.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,37 +46,47 @@ def sequence_from_path(path: str) -> str | None:
         return None
 
 
+def valid_content_type(destination: Path, content_type: str) -> bool:
+    """Reject Drive HTML/error pages while allowing organizer text metadata."""
+    media_type = content_type.lower().split(";", 1)[0].strip()
+    if destination.suffix.lower() in {".jpg", ".jpeg", ".png"}:
+        return media_type.startswith("image/")
+    return media_type in {"text/plain", "application/octet-stream"}
+
+
 def download(file_id: str, destination: Path) -> bool:
     if destination.exists() and destination.stat().st_size > 0:
         return True
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".part")
+    endpoints = (
+        (
+            "https://drive.usercontent.google.com/download",
+            {"id": file_id, "export": "download", "confirm": "t"},
+        ),
+        (
+            "https://drive.google.com/uc",
+            {"id": file_id, "export": "download", "confirm": "t"},
+        ),
+    )
     for attempt in range(2):
-        try:
-            # The public Drive index points at small JPEGs.  gdown's generic
-            # redirect flow can wait forever when Drive throttles a redirect,
-            # so use the bounded official content endpoint and validate that
-            # the response is really an image before checkpointing it.
-            url = "https://drive.usercontent.google.com/download"
-            with requests.get(
-                url,
-                params={"id": file_id, "export": "download", "confirm": "t"},
-                stream=True,
-                timeout=(8, 20),
-            ) as response:
-                response.raise_for_status()
-                if not response.headers.get("content-type", "").lower().startswith("image/"):
-                    raise ValueError("Drive response is not an image")
-                with temporary.open("wb") as output:
-                    for chunk in response.iter_content(chunk_size=64 * 1024):
-                        if chunk:
-                            output.write(chunk)
-            if temporary.stat().st_size > 0:
-                temporary.replace(destination)
-                return True
-        except Exception:
-            pass
-        temporary.unlink(missing_ok=True)
+        for url, params in endpoints:
+            try:
+                # Both official endpoints occasionally throttle independently.
+                # Keep every request bounded and reject HTML/error responses.
+                with requests.get(url, params=params, stream=True, timeout=(8, 20)) as response:
+                    response.raise_for_status()
+                    if not valid_content_type(destination, response.headers.get("content-type", "")):
+                        raise ValueError("Drive response has an unexpected content type")
+                    with temporary.open("wb") as output:
+                        for chunk in response.iter_content(chunk_size=64 * 1024):
+                            if chunk:
+                                output.write(chunk)
+                if temporary.stat().st_size > 0:
+                    temporary.replace(destination)
+                    return True
+            except Exception:
+                temporary.unlink(missing_ok=True)
         if attempt == 0:
             time.sleep(1)
     return False
@@ -87,6 +99,30 @@ def make_tracker(kind: str):
     return getattr(cv2, constructor)()
 
 
+def checkpoint_manifest(tracker: str, initial_boxes: Path | None) -> dict[str, str]:
+    """Bind reusable checkpoints to every prediction-affecting input."""
+    if initial_boxes is None:
+        source = "organizer_init_rect"
+    else:
+        source = f"file_sha256:{hashlib.sha256(initial_boxes.read_bytes()).hexdigest()}"
+    return {"schema": "hotc-checkpoint-v2", "tracker": tracker, "initialization": source}
+
+
+def ensure_checkpoint_manifest(work: Path, expected: dict[str, str]) -> None:
+    path = work / "checkpoint_manifest.json"
+    checkpoint_dir = work / "checkpoints"
+    existing_checkpoints = list(checkpoint_dir.glob("*.csv")) if checkpoint_dir.exists() else []
+    if path.exists():
+        actual = json.loads(path.read_text(encoding="utf-8"))
+        if actual != expected:
+            raise ValueError(f"Checkpoint configuration mismatch: {actual} != {expected}")
+    elif existing_checkpoints:
+        raise ValueError("Legacy checkpoints have no configuration manifest; use a new work directory")
+    else:
+        work.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(expected, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--listing", type=Path, required=True)
@@ -96,12 +132,24 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("submissions/csrt_v1.csv"))
     parser.add_argument("--tracker", choices=("kcf", "csrt"), default="kcf")
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--sequences-file", type=Path, help="Optional newline-delimited sequence subset"
+    )
     args = parser.parse_args()
 
     sample = pd.read_csv(args.sample)
     sample["sequence"] = sample.ID.str.rsplit("_", n=1).str[0]
     sample["frame"] = sample.ID.str.rsplit("_", n=1).str[1].astype(int)
     sequences = sample.sequence.drop_duplicates().tolist()
+    if args.sequences_file:
+        requested = {
+            line.strip() for line in args.sequences_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        unknown = sorted(requested.difference(sequences))
+        if unknown:
+            raise ValueError(f"Unknown requested sequences: {unknown}")
+        sequences = [sequence for sequence in sequences if sequence in requested]
     if args.limit:
         sequences = sequences[: args.limit]
 
@@ -115,6 +163,7 @@ def main() -> None:
         initial_boxes["frame"] = initial_boxes.ID.str.rsplit("_", n=1).str[1].astype(int)
         initial_boxes = initial_boxes[initial_boxes.frame == 1].set_index("sequence")
 
+    ensure_checkpoint_manifest(args.work, checkpoint_manifest(args.tracker, args.initial_boxes))
     args.work.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = args.work / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -177,15 +226,14 @@ def main() -> None:
             }
             available.update(jobs[job] for job in as_completed(jobs) if job.result())
 
-        # A zero-frame sequence is not a tracking result.  Persisting only the
-        # initial box would make later runs treat a failed download as a valid
-        # checkpoint and could silently contaminate the final submission.
-        if not available:
+        # A full-length CSV with carried-forward boxes is still not a complete
+        # tracking result. Require every target image before checkpointing.
+        if len(available) != len(target):
             checkpoint.unlink(missing_ok=True)
             for path in paths.values():
                 path.unlink(missing_ok=True)
             print(
-                f"[{index}/{len(sequences)}] {sequence}: 0/{len(target)} frames; retryable",
+                f"[{index}/{len(sequences)}] {sequence}: {len(available)}/{len(target)} frames; retryable",
                 flush=True,
             )
             continue
@@ -212,20 +260,21 @@ def main() -> None:
         print(f"[{index}/{len(sequences)}] {sequence}: {len(available)}/{len(target)} frames", flush=True)
 
     checkpoints = []
-    for sequence in sample.sequence.drop_duplicates():
+    for sequence in sequences:
         path = checkpoint_dir / f"{sequence}.csv"
         if path.exists():
             checkpoints.append(pd.read_csv(path))
-    if len(checkpoints) == sample.sequence.nunique():
-        submission = sample[["ID"]].merge(pd.concat(checkpoints), on="ID", how="left", sort=False)
-        assert submission.ID.tolist() == sample.ID.tolist()
+    if len(checkpoints) == len(sequences):
+        selected_sample = sample[sample.sequence.isin(sequences)]
+        submission = selected_sample[["ID"]].merge(pd.concat(checkpoints), on="ID", how="left", sort=False)
+        assert submission.ID.tolist() == selected_sample.ID.tolist()
         assert not submission.isna().any().any()
         assert (submission[["width", "height"]] > 0).all().all()
         args.output.parent.mkdir(parents=True, exist_ok=True)
         submission.to_csv(args.output, index=False)
         print(f"Submission ready: {args.output} ({len(submission)} rows)")
     else:
-        print(f"Partial run: {completed}/{sample.sequence.nunique()} sequences checkpointed")
+        print(f"Partial run: {completed}/{len(sequences)} sequences checkpointed")
 
 
 if __name__ == "__main__":
